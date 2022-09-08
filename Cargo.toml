@@ -7,3 +7,4 @@ edition = "2021"
 
 [dependencies]
 utf8_slice = "1.0.0"
+parse_int = "0.6.0"
