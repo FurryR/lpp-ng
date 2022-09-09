@@ -3,17 +3,6 @@ use super::parse::{transfer, LppStatus, QuoteStatus};
 use parse_int;
 use std::collections::BTreeMap;
 use std::i32;
-pub enum RawValue {
-  Null(()),
-  Boolean(bool),
-  Number(f64),
-  String(String),
-  Array(Vec<Var>),
-  Object(BTreeMap<String, Var>),
-  Function(FuncValue),
-  Statement(StmtValue),
-  Expression(ExprValue),
-}
 #[derive(PartialEq)]
 pub struct StmtValue {
   pub value: String,
@@ -325,9 +314,87 @@ impl NewExpr<String> for ExprValue {
     }
   }
 }
-pub struct Var {
-  pub value: RawValue,
+pub enum Var {
+  Null(()),
+  Boolean(bool),
+  Number(f64),
+  String(String),
+  Array(Vec<Var>),
+  Object(BTreeMap<String, Var>),
+  Function(FuncValue),
+  Statement(StmtValue),
+  Expression(ExprValue),
 }
+// into
+pub trait VarInto<T> {
+  fn try_into(&self) -> Result<T, Error>;
+}
+impl VarInto<()> for Var {
+  fn try_into(&self) -> Result<(), Error> {
+    match self {
+      Var::Null(_) => Ok(()),
+      _ => Err(Error::new(String::from("Conversion failed"))),
+    }
+  }
+}
+impl VarInto<bool> for Var {
+  fn try_into(&self) -> Result<bool, Error> {
+    match self {
+      Var::Boolean(val) => Ok(val),
+      Var::Number(val) => Ok(val as bool),
+      _ => Err(Error::new(String::from("Conversion failed"))),
+    }
+  }
+}
+impl VarInto<f64> for Var {
+  fn try_into(&self) -> Result<f64, Error> {
+    match self {
+      Var::Number(val) => Ok(val),
+      Var::Boolean(val) => Ok(if val { 1.0 } else { 0.0 }),
+      _ => Err(Error::new(String::from("Conversion failed"))),
+    }
+  }
+}
+impl VarInto<String> for Var {
+  fn try_into(&self) -> Result<String, Error> {
+    match self {
+      Var::String(val) => Ok(val),
+      _ => Ok(self.to_string()),
+    }
+  }
+}
+impl VarInto<Vec<Var>> for Var {
+  fn try_into(&self) -> Result<Vec<Var>, Error> {
+    match self {
+      Var::Array(val) => Ok(val),
+      _ => Err(Error::new(String::from("Conversion failed"))),
+    }
+  }
+}
+impl VarInto<BTreeMap<String, Var>> for Var {
+  fn try_into(&self) -> Result<BTreeMap<String, Var>, Error> {
+    match self {
+      Var::Object(val) => Ok(val),
+      _ => Err(Error::new(String::from("Conversion failed"))),
+    }
+  }
+}
+// opcall
+impl Var {
+  pub fn opcall_single(&self, op: char) -> Result<Var, Error> {
+    match op {
+      //TODO:opcall
+      '~' => {
+        let op = self.try_into::<f64>();
+        return match op {
+          Ok(val) => {}
+          Err(err) => {}
+        };
+      }
+    }
+  }
+}
+// from
 impl Var {
   pub fn from(str: &str) -> Result<Var, Error> {
     let raw = clearnull(str);
@@ -446,7 +513,7 @@ impl Var {
           }
           match Var::from(pair[0].as_str()) {
             Ok(val) => {
-              if let RawValue::String(str) = val.value {
+              if let Var::String(str) = val {
                 match Var::from(pair[1].as_str()) {
                   Ok(val) => {
                     ret.insert(str, val);
@@ -482,64 +549,46 @@ pub trait NewVar<T> {
 }
 impl NewVar<()> for Var {
   fn new(_: ()) -> Var {
-    return Var {
-      value: RawValue::Null(()),
-    };
+    Var::Null(())
   }
 }
 impl NewVar<bool> for Var {
   fn new(val: bool) -> Var {
-    return Var {
-      value: RawValue::Boolean(val),
-    };
+    Var::Boolean(val)
   }
 }
 impl NewVar<f64> for Var {
   fn new(val: f64) -> Var {
-    return Var {
-      value: RawValue::Number(val),
-    };
+    Var::Number(val)
   }
 }
 impl NewVar<String> for Var {
   fn new(val: String) -> Var {
-    return Var {
-      value: RawValue::String(val),
-    };
+    Var::String(val)
   }
 }
 impl NewVar<Vec<Var>> for Var {
   fn new(val: Vec<Var>) -> Var {
-    return Var {
-      value: RawValue::Array(val),
-    };
+    Var::Array(val)
   }
 }
 impl NewVar<BTreeMap<String, Var>> for Var {
   fn new(val: BTreeMap<String, Var>) -> Var {
-    return Var {
-      value: RawValue::Object(val),
-    };
+    Var::Object(val)
   }
 }
 impl NewVar<FuncValue> for Var {
   fn new(val: FuncValue) -> Var {
-    return Var {
-      value: RawValue::Function(val),
-    };
+    Var::Function(val)
   }
 }
 impl NewVar<StmtValue> for Var {
   fn new(val: StmtValue) -> Var {
-    return Var {
-      value: RawValue::Statement(val),
-    };
+    Var::Statement(val)
   }
 }
 impl NewVar<ExprValue> for Var {
   fn new(val: ExprValue) -> Var {
-    return Var {
-      value: RawValue::Expression(val),
-    };
+    Var::Expression(val)
   }
 }
