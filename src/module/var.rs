@@ -2,34 +2,142 @@ use super::error::Error;
 use super::parse::{transfer, LppStatus, QuoteStatus};
 use parse_int;
 use std::collections::BTreeMap;
+use std::convert::{TryFrom, TryInto};
 use std::i32;
-#[derive(PartialEq)]
+/// 语句块。
+/// 你可以以以下方式定义一个语句块：
+/// ```
+/// let s = StmtValue::new();
+/// assert_eq!(s.value, "");
+/// let s2 = StmtValue::from(String::new("awa"));
+/// assert_eq!(s2.value, "awa");
+/// let s3 = StmtValue::parse("{awa}");
+/// assert_eq!(s3.value, "awa");
+/// ```
+#[derive(PartialEq, Clone)]
 pub struct StmtValue {
+  /// 语句块的内容。
+  /// 保存原始内容（含有空格，分隔符等），需要手动分割。
   pub value: String,
 }
 impl StmtValue {
-  pub fn new(value: String) -> StmtValue {
+  /// 新建一个语句块。
+  /// 若需要指定语句块内容，请使用 `StmtValue::from` 而不是 `StmtValue::new`。
+  /// ```
+  /// let s = StmtValue::new();
+  /// assert_eq!(s.value, "");
+  /// ```
+  pub fn new() -> Self {
+    StmtValue {
+      value: String::new(),
+    }
+  }
+}
+impl From<String> for StmtValue {
+  /// 以指定内容新建语句块。
+  /// `value`: 语句块的内容。
+  /// ```
+  /// let s = StmtValue::from(String::from("awa"));
+  /// assert_eq!(s.value, "awa");
+  /// ```
+  fn from(value: String) -> Self {
     StmtValue { value }
   }
-  pub fn from(str: &str) -> StmtValue {
+}
+impl StmtValue {
+  /// 对语句块进行反序列化。
+  /// `str`: 序列化语句块。
+  /// ```
+  /// let a = StmtValue::parse("{awa}");
+  /// assert_eq!(a.value, "awa");
+  /// ```
+  fn parse(str: &str) -> Self {
     StmtValue {
       value: utf8_slice::slice(str, 1, utf8_slice::len(str) - 1).to_string(),
     }
   }
-  pub fn to_string(&self) -> String {
+}
+impl ToString for StmtValue {
+  /// 对语句块进行序列化。
+  /// ```
+  /// let a = StmtValue::parse("{awa}");
+  /// assert_eq!(a.to_string(), "{awa}");
+  /// ```
+  fn to_string(&self) -> String {
     format!("{{{}}}", self.value)
   }
 }
-#[derive(PartialEq)]
+/// 单个参数。
+/// 参数允许可选值。一旦一个参数为可选参数，则后面的参数都必须为可选参数。
+/// ```
+/// let a = ArgItem::parse("awa=1");
+/// assert_eq!(a.name, "awa");
+/// assert_eq!(a.value, "1");
+/// ```
+#[derive(PartialEq, Clone)]
 pub struct ArgItem {
-  name: String,
-  value: String,
+  /// 参数的名字。
+  /// 此模块不会对命名进行检查。
+  pub name: String,
+  /// 参数的内容（可选）。
+  /// 没有参数时，`value`应为空字符串。
+  pub value: String,
 }
 impl ArgItem {
-  pub fn new(name: String, value: String) -> ArgItem {
-    ArgItem { name, value }
+  /// 新建参数。
+  /// 不推荐使用此方法。请换用 `ArgItem::from` 来新建参数。
+  /// ```
+  /// let a = ArgItem::new();
+  /// assert_eq!(a.name, "");
+  /// assert_eq!(a.value, "");
+  /// ```
+  pub fn new() -> Self {
+    ArgItem {
+      name: String::new(),
+      value: String::new(),
+    }
   }
-  pub fn from(str: &str) -> ArgItem {
+}
+impl ToString for ArgItem {
+  /// 序列化参数。
+  /// 序列化的参数将可以被 `ArgItem::parse` 解析。
+  /// ```
+  /// let a = ArgItem::from((String::from("awa"),String::from("1")));
+  /// assert_eq!(a.to_string(), "awa=1");
+  /// ```
+  fn to_string(&self) -> String {
+    if self.value != "" {
+      format!("{}={}", self.name, self.value)
+    } else {
+      self.name.clone()
+    }
+  }
+}
+impl From<(String, String)> for ArgItem {
+  /// 由给定的参数名和默认值（如果有）构建参数。
+  /// `val.0`: 参数名。
+  /// `val.1`: 默认值。
+  /// ```
+  /// let a = ArgItem::from((String::from("awa"),String::from("1")));
+  /// assert_eq!(a.name, "awa");
+  /// assert_eq!(a.value, "1");
+  /// ```
+  fn from(val: (String, String)) -> Self {
+    ArgItem {
+      name: val.0,
+      value: val.1,
+    }
+  }
+}
+impl ArgItem {
+  /// 反序列化参数。
+  /// `str`: 序列化后的参数。
+  /// ```
+  /// let a = ArgItem::parse("awa=1");
+  /// assert_eq!(a.name, "awa");
+  /// assert_eq!(a.value, "1");
+  /// ```
+  pub fn parse(str: &str) -> Self {
     let mut status: LppStatus = LppStatus::new();
     for (index, item) in str.chars().enumerate() {
       transfer(item, &mut status);
@@ -40,58 +148,98 @@ impl ArgItem {
         };
       }
     }
-    return ArgItem {
+    ArgItem {
       name: str.to_string(),
       value: String::new(),
-    };
-  }
-  pub fn to_string(&self) -> String {
-    if self.value != "" {
-      format!("{}={}", self.name, self.value)
-    } else {
-      self.name.clone()
     }
   }
 }
-#[derive(PartialEq)]
+/// 函数。
+/// ```
+/// let a = FuncValue::parse("func(){}").unwrap();
+/// ```
+#[derive(PartialEq, Clone)]
 pub struct FuncValue {
+  /// 参数列表。
   pub args: Vec<ArgItem>,
+  /// 语句块。
   pub value: StmtValue,
 }
 impl FuncValue {
-  pub fn new(args: Vec<ArgItem>, value: StmtValue) -> FuncValue {
-    FuncValue { args, value }
+  /// 创建空的函数。
+  /// ```
+  /// let s = FuncValue::new();
+  /// assert_eq!(s.value.value, "");
+  /// ```
+  pub fn new() -> Self {
+    FuncValue {
+      args: vec![],
+      value: StmtValue::new(),
+    }
   }
-  pub fn from(str: &str) -> Result<FuncValue, Error> {
+}
+impl TryFrom<(Vec<ArgItem>, StmtValue)> for FuncValue {
+  type Error = Error;
+  /// 由参数列表和内容块构造函数。
+  /// `val.0`: 参数列表。
+  /// `val.1`: 函数体。
+  fn try_from(val: (Vec<ArgItem>, StmtValue)) -> Result<Self, Self::Error> {
+    let mut flag = false;
+    for item in val.0.iter() {
+      if item.value == "" && flag {
+        return Err(Error::from(String::from("Syntax Error")));
+      }
+      if item.value != "" {
+        flag = true;
+      }
+    }
+    Ok(FuncValue {
+      args: val.0,
+      value: val.1,
+    })
+  }
+}
+impl ToString for FuncValue {
+  fn to_string(&self) -> String {
+    let mut tmp = String::from("func(");
+    for (index, item) in self.args.iter().enumerate() {
+      tmp += item.to_string().as_str();
+      if index + 1 < self.args.len() {
+        tmp.push(',')
+      }
+    }
+    tmp.push(')');
+    format!("{}{}", tmp, self.value.to_string())
+  }
+}
+impl FuncValue {
+  pub fn parse(str: &str) -> Result<Self, Error> {
     let brace = str.find('(');
     match brace {
       Some(idx) => {
         let mut arg: Vec<ArgItem> = vec![];
         let mut temp: String = String::new();
         let mut status: LppStatus = LppStatus::new();
-        let mut nowindex: usize = 0;
-        for (index, item) in utf8_slice::slice(str, idx + 1, utf8_slice::len(str))
-          .chars()
-          .enumerate()
-        {
-          nowindex = idx + 1 + index;
+        let mut nowindex: usize = idx;
+        for item in utf8_slice::slice(str, idx + 1, utf8_slice::len(str)).chars() {
+          nowindex += 1;
           if item == ')' && status.brace == 0 && status.quote == QuoteStatus::None {
             break;
           }
           transfer(item, &mut status);
           if item == ',' && status.brace == 0 && status.quote == QuoteStatus::None {
-            arg.push(ArgItem::from(temp.as_str()));
+            arg.push(ArgItem::parse(temp.as_str()));
             temp.clear();
           } else {
             temp.push(item);
           }
         }
         if temp != "" {
-          arg.push(ArgItem::from(temp.as_str()));
+          arg.push(ArgItem::parse(temp.as_str()));
         }
         nowindex += 1;
         if str.chars().nth(nowindex) != Some('{') {
-          return Err(Error::new(String::from("Syntax error")));
+          return Err(Error::from(String::from("Syntax error")));
         }
         temp.clear();
         status = LppStatus::new();
@@ -102,12 +250,9 @@ impl FuncValue {
             break;
           }
         }
-        return Ok(FuncValue {
-          args: arg,
-          value: StmtValue::from(temp.as_str()),
-        });
+        Ok(FuncValue::try_from((arg, StmtValue::parse(temp.as_str())))?)
       }
-      None => Err(Error::new(String::from("Syntax error"))),
+      None => Err(Error::from(String::from("Syntax error"))),
     }
   }
 }
@@ -122,14 +267,10 @@ pub fn covered_with(str: &str, left: char, right: char) -> bool {
   for (index, item) in str.chars().enumerate() {
     transfer(item, &mut status);
     if item == right && status.quote == QuoteStatus::None && status.brace == 0 {
-      return if index != utf8_slice::len(str) - 1 {
-        false
-      } else {
-        true
-      };
+      return index == utf8_slice::len(str) - 1;
     }
   }
-  return false;
+  false
 }
 pub fn split_by(str: &str, delim: char) -> Vec<String> {
   let mut ret: Vec<String> = vec![];
@@ -144,7 +285,10 @@ pub fn split_by(str: &str, delim: char) -> Vec<String> {
       tmp.push(item);
     }
   }
-  return ret;
+  if tmp != "" {
+    ret.push(tmp);
+  }
+  ret
 }
 pub fn clearnull(str: &str) -> String {
   let mut tmp = String::new();
@@ -177,15 +321,16 @@ pub fn clearnull(str: &str) -> String {
   }
   return tmp;
 }
-pub enum NodeValue {
+#[derive(Clone)]
+pub enum ExprValue {
   // val,l,r
   Expr((String, String, String)),
   Val(String),
 }
-pub struct ExprValue {
-  pub val: NodeValue,
-}
 impl ExprValue {
+  pub fn new() -> Self {
+    ExprValue::Val(String::new())
+  }
   pub fn getprio(op: &str, front: bool) -> i32 {
     match op {
       "," => 0,
@@ -234,7 +379,24 @@ impl ExprValue {
       _ => -1,
     }
   }
-  pub fn from(str: &str) -> Result<ExprValue, Error> {
+  pub fn isexp(str: &str) -> bool {
+    if covered_with(str, '(', ')') {
+      return true;
+    }
+    match ExprValue::parse(clearnull(str).as_str()) {
+      Ok(p) => {
+        if let ExprValue::Expr(_) = p {
+          true
+        } else {
+          false
+        }
+      }
+      Err(_) => false,
+    }
+  }
+}
+impl ExprValue {
+  pub fn parse(str: &str) -> Result<Self, Error> {
     let mut status = LppStatus::new();
     let mut opindex: usize = 0;
     let mut opend: usize = 0;
@@ -269,51 +431,29 @@ impl ExprValue {
       opindex = utf8_slice::len(str) - utf8_slice::len(temp.as_str());
     }
     if status.brace != 0 || status.quote != QuoteStatus::None {
-      return Err(Error::new(String::from("Invalid expression")));
+      return Err(Error::from(String::from("Invalid expression")));
     }
     if minpr == i32::MAX {
-      return Ok(ExprValue::new(str.to_string()));
+      return Ok(ExprValue::from(str.to_string()));
     }
-    return Ok(ExprValue::new((
+    Ok(ExprValue::from((
       utf8_slice::slice(str, opindex, opend).to_string(),
       utf8_slice::slice(str, 0, opindex).to_string(),
       utf8_slice::slice(str, opend + 1, utf8_slice::len(str)).to_string(),
-    )));
-  }
-  pub fn isexp(str: &str) -> bool {
-    //TODO:isexp
-    if covered_with(str, '(', ')') {
-      return true;
-    }
-    return match ExprValue::from(clearnull(str).as_str()) {
-      Ok(p) => {
-        if let NodeValue::Expr(_) = p.val {
-          true
-        } else {
-          false
-        }
-      }
-      Err(_) => false,
-    };
+    )))
   }
 }
-pub trait NewExpr<T> {
-  fn new(val: T) -> ExprValue;
-}
-impl NewExpr<(String, String, String)> for ExprValue {
-  fn new(val: (String, String, String)) -> ExprValue {
-    ExprValue {
-      val: NodeValue::Expr(val),
-    }
+impl From<(String, String, String)> for ExprValue {
+  fn from(val: (String, String, String)) -> Self {
+    ExprValue::Expr(val)
   }
 }
-impl NewExpr<String> for ExprValue {
-  fn new(val: String) -> ExprValue {
-    ExprValue {
-      val: NodeValue::Val(val),
-    }
+impl From<String> for ExprValue {
+  fn from(val: String) -> Self {
+    ExprValue::Val(val)
   }
 }
+#[derive(Clone)]
 pub enum Var {
   Null(()),
   Boolean(bool),
@@ -325,82 +465,428 @@ pub enum Var {
   Statement(StmtValue),
   Expression(ExprValue),
 }
-// into
-pub trait VarInto<T> {
-  fn try_into(&self) -> Result<T, Error>;
+pub enum ValueType {
+  Null,
+  Boolean,
+  Number,
+  String,
+  Array,
+  Object,
+  Function,
+  Statement,
+  Expression,
 }
-impl VarInto<()> for Var {
-  fn try_into(&self) -> Result<(), Error> {
+// tp
+impl Var {
+  pub fn tp(&self) -> ValueType {
     match self {
+      Var::Null(_) => ValueType::Null,
+      Var::Boolean(_) => ValueType::Boolean,
+      Var::Number(_) => ValueType::Number,
+      Var::String(_) => ValueType::String,
+      Var::Array(_) => ValueType::Array,
+      Var::Object(_) => ValueType::Object,
+      Var::Function(_) => ValueType::Object,
+      Var::Statement(_) => ValueType::Statement,
+      Var::Expression(_) => ValueType::Expression,
+    }
+  }
+}
+// convert
+impl Var {
+  pub fn convert(self, tp: ValueType) -> Result<Var, Error> {
+    match tp {
+      ValueType::Null => Ok(Var::Null(TryInto::<()>::try_into(self)?)),
+      ValueType::Boolean => Ok(Var::Boolean(TryInto::<bool>::try_into(self)?)),
+      ValueType::Number => Ok(Var::Number(TryInto::<f64>::try_into(self)?)),
+      ValueType::String => Ok(Var::String(TryInto::<String>::try_into(self)?)),
+      ValueType::Array => Ok(Var::Array(TryInto::<Vec<Var>>::try_into(self)?)),
+      ValueType::Object => Ok(Var::Object(TryInto::<BTreeMap<String, Var>>::try_into(
+        self,
+      )?)),
+      _ => Err(Error::from(String::from("Conversion failed"))),
+    }
+  }
+}
+impl TryFrom<Var> for () {
+  type Error = Error;
+  fn try_from(val: Var) -> Result<(), Self::Error> {
+    match val {
       Var::Null(_) => Ok(()),
-      _ => Err(Error::new(String::from("Conversion failed"))),
+      _ => Err(Error::from(String::from("Conversion failed"))),
     }
   }
 }
-impl VarInto<bool> for Var {
-  fn try_into(&self) -> Result<bool, Error> {
-    match self {
+impl TryFrom<Var> for bool {
+  type Error = Error;
+  fn try_from(val: Var) -> Result<Self, Self::Error> {
+    match val {
       Var::Boolean(val) => Ok(val),
-      Var::Number(val) => Ok(val as bool),
-      _ => Err(Error::new(String::from("Conversion failed"))),
+      Var::Number(val) => Ok(val != 0.0),
+      _ => Err(Error::from(String::from("Conversion failed"))),
     }
   }
 }
-impl VarInto<f64> for Var {
-  fn try_into(&self) -> Result<f64, Error> {
-    match self {
+impl TryFrom<Var> for f64 {
+  type Error = Error;
+  fn try_from(val: Var) -> Result<Self, Self::Error> {
+    match val {
       Var::Number(val) => Ok(val),
       Var::Boolean(val) => Ok(if val { 1.0 } else { 0.0 }),
-      _ => Err(Error::new(String::from("Conversion failed"))),
+      _ => Err(Error::from(String::from("Conversion failed"))),
     }
   }
 }
-impl VarInto<String> for Var {
-  fn try_into(&self) -> Result<String, Error> {
-    match self {
+impl TryFrom<Var> for String {
+  type Error = Error;
+  fn try_from(val: Var) -> Result<Self, Self::Error> {
+    match val {
       Var::String(val) => Ok(val),
-      _ => Ok(self.to_string()),
+      _ => Ok(val.to_string()),
     }
   }
 }
-impl VarInto<Vec<Var>> for Var {
-  fn try_into(&self) -> Result<Vec<Var>, Error> {
-    match self {
+impl TryFrom<Var> for Vec<Var> {
+  type Error = Error;
+  fn try_from(val: Var) -> Result<Self, Self::Error> {
+    match val {
       Var::Array(val) => Ok(val),
-      _ => Err(Error::new(String::from("Conversion failed"))),
+      _ => Err(Error::from(String::from("Conversion failed"))),
     }
   }
 }
-impl VarInto<BTreeMap<String, Var>> for Var {
-  fn try_into(&self) -> Result<BTreeMap<String, Var>, Error> {
-    match self {
+impl TryFrom<Var> for BTreeMap<String, Var> {
+  type Error = Error;
+  fn try_from(val: Var) -> Result<Self, Self::Error> {
+    match val {
       Var::Object(val) => Ok(val),
-      _ => Err(Error::new(String::from("Conversion failed"))),
+      _ => Err(Error::from(String::from("Conversion failed"))),
     }
   }
 }
 // opcall
 impl Var {
-  pub fn opcall_single(&self, op: char) -> Result<Var, Error> {
+  pub fn opcall_single(self, op: char) -> Result<Var, Error> {
     match op {
-      //TODO:opcall
-      '~' => {
-        let op = self.try_into::<f64>();
-        return match op {
-          Ok(val) => {}
-          Err(err) => {}
-        };
+      '~' => Ok(Var::Number(f64::from(
+        !((TryInto::<f64>::try_into(self)?) as i32),
+      ))),
+      '-' => Ok(Var::Number(-(TryInto::<f64>::try_into(self)?))),
+      '+' => Ok(Var::Number(TryInto::<f64>::try_into(self)?)),
+      '!' => Ok(Var::Boolean(!(TryInto::<bool>::try_into(self)?))),
+      _ => Err(Error::from(String::from("Unknown operand"))),
+    }
+  }
+  fn opcmp(&self, op: &str, val: &Var) -> Result<bool, Error> {
+    match op {
+      "===" | "==" => match self {
+        Var::Null(_) => {
+          if let Var::Null(_) = val {
+            Ok(true)
+          } else {
+            Ok(false)
+          }
+        }
+        Var::Boolean(left) => {
+          if let Var::Boolean(right) = val {
+            Ok(left == right)
+          } else {
+            Ok(false)
+          }
+        }
+        Var::Number(left) => {
+          if let Var::Number(right) = val {
+            Ok(left == right)
+          } else {
+            Ok(false)
+          }
+        }
+        Var::String(left) => {
+          if let Var::String(right) = val {
+            Ok(left == right)
+          } else {
+            Ok(false)
+          }
+        }
+        Var::Array(left) => {
+          if let Var::Array(right) = val {
+            if left.len() == right.len() {
+              Ok(left.iter().enumerate().all(|(index, item)| {
+                if let Ok(val) = item.clone().opcall(op, &right[index]) {
+                  if let Var::Boolean(val) = val {
+                    val
+                  } else {
+                    false
+                  }
+                } else {
+                  false
+                }
+              }))
+            } else {
+              Ok(false)
+            }
+          } else {
+            Ok(false)
+          }
+        }
+        Var::Object(left) => {
+          if let Var::Object(right) = val {
+            if left.len() == right.len() {
+              Ok(left.iter().all(|(key, value)| {
+                if let Some(r_val) = right.get(key) {
+                  if let Ok(val) = value.clone().opcall(op, r_val) {
+                    if let Var::Boolean(val) = val {
+                      val
+                    } else {
+                      false
+                    }
+                  } else {
+                    false
+                  }
+                } else {
+                  false
+                }
+              }))
+            } else {
+              Ok(false)
+            }
+          } else {
+            Ok(false)
+          }
+        }
+        Var::Function(left) => {
+          if let Var::Function(right) = val {
+            Ok(left == right)
+          } else {
+            Ok(false)
+          }
+        }
+        _ => Ok(false),
+      },
+      "!=" | "!==" => Ok(!(self.opcmp(op, val)?)),
+      ">" => match self {
+        Var::Number(left) => {
+          if let Var::Number(right) = val {
+            Ok(*left > *right)
+          } else {
+            Ok(false)
+          }
+        }
+        Var::String(left) => {
+          if let Var::String(right) = val {
+            Ok(left > right)
+          } else {
+            Ok(false)
+          }
+        }
+        _ => Ok(false),
+      },
+      "<" => match self {
+        Var::Number(left) => {
+          if let Var::Number(right) = val {
+            Ok(*left < *right)
+          } else {
+            Ok(false)
+          }
+        }
+        Var::String(left) => {
+          if let Var::String(right) = val {
+            Ok(left < right)
+          } else {
+            Ok(false)
+          }
+        }
+        _ => Ok(false),
+      },
+      ">=" => Ok(!(self.opcmp("<", val)?)),
+      "<=" => Ok(!(self.opcmp(">", val)?)),
+      _ => Err(Error::from(String::from("Unknown operand"))),
+    }
+  }
+  pub fn opcall(self, op: &str, val: &Var) -> Result<Var, Error> {
+    match op {
+      "==" | "!=" | ">=" | "<=" | ">" | "<" => {
+        if let Ok(conv) = self.convert(val.tp()) {
+          Ok(Var::Boolean(conv.opcmp(op, &val)?))
+        } else {
+          Ok(Var::Boolean(false))
+        }
+      }
+      "===" | "!==" => Ok(Var::Boolean(self.opcmp(op, &val)?)),
+      _ => {
+        let conv = self.convert(val.tp())?;
+        match op {
+          "+" => match conv {
+            Var::Number(left) => {
+              if let Var::Number(right) = val {
+                Ok(Var::Number(left + right))
+              } else {
+                Err(Error::from(String::from("Calculation failed")))
+              }
+            }
+            Var::String(left) => {
+              if let Var::String(right) = val {
+                Ok(Var::String(left + right.as_str()))
+              } else {
+                Err(Error::from(String::from("Calculation failed")))
+              }
+            }
+            Var::Array(left) => {
+              if let Var::Array(right) = val {
+                let mut s = left.clone();
+                s.append(&mut right.clone());
+                Ok(Var::Array(s))
+              } else {
+                Err(Error::from(String::from("Calculation failed")))
+              }
+            }
+            _ => Err(Error::from(String::from("Calculation failed"))),
+          },
+          "-" => {
+            if let Var::Number(left) = conv {
+              if let Var::Number(right) = val {
+                Ok(Var::Number(left - right))
+              } else {
+                Err(Error::from(String::from("Calculation failed")))
+              }
+            } else {
+              Err(Error::from(String::from("Calculation failed")))
+            }
+          }
+          "*" => {
+            if let Var::Number(left) = conv {
+              if let Var::Number(right) = val {
+                Ok(Var::Number(left * right))
+              } else {
+                Err(Error::from(String::from("Calculation failed")))
+              }
+            } else {
+              Err(Error::from(String::from("Calculation failed")))
+            }
+          }
+          "/" => {
+            if let Var::Number(left) = conv {
+              if let Var::Number(right) = val {
+                if *right != 0.0 {
+                  Ok(Var::Number(left / right))
+                } else {
+                  Ok(Var::Number(f64::NAN))
+                }
+              } else {
+                Err(Error::from(String::from("Calculation failed")))
+              }
+            } else {
+              Err(Error::from(String::from("Calculation failed")))
+            }
+          }
+          "%" => {
+            if let Var::Number(left) = conv {
+              if let Var::Number(right) = val {
+                if *right != 0.0 {
+                  Ok(Var::Number(left % right))
+                } else {
+                  Ok(Var::Number(f64::NAN))
+                }
+              } else {
+                Err(Error::from(String::from("Calculation failed")))
+              }
+            } else {
+              Err(Error::from(String::from("Calculation failed")))
+            }
+          }
+          "&" => {
+            if let Var::Number(left) = conv {
+              if let Var::Number(right) = val {
+                Ok(Var::Number(((left as i32) & (*right as i32)) as f64))
+              } else {
+                Err(Error::from(String::from("Calculation failed")))
+              }
+            } else {
+              Err(Error::from(String::from("Calculation failed")))
+            }
+          }
+          "|" => {
+            if let Var::Number(left) = conv {
+              if let Var::Number(right) = val {
+                Ok(Var::Number(((left as i32) | (*right as i32)) as f64))
+              } else {
+                Err(Error::from(String::from("Calculation failed")))
+              }
+            } else {
+              Err(Error::from(String::from("Calculation failed")))
+            }
+          }
+          "^" => {
+            if let Var::Number(left) = conv {
+              if let Var::Number(right) = val {
+                Ok(Var::Number(((left as i32) ^ (*right as i32)) as f64))
+              } else {
+                Err(Error::from(String::from("Calculation failed")))
+              }
+            } else {
+              Err(Error::from(String::from("Calculation failed")))
+            }
+          }
+          "<<" => {
+            if let Var::Number(left) = conv {
+              if let Var::Number(right) = val {
+                Ok(Var::Number(((left as i32) << (*right as i32)) as f64))
+              } else {
+                Err(Error::from(String::from("Calculation failed")))
+              }
+            } else {
+              Err(Error::from(String::from("Calculation failed")))
+            }
+          }
+          ">>" => {
+            if let Var::Number(left) = conv {
+              if let Var::Number(right) = val {
+                Ok(Var::Number(((left as i32) >> (*right as i32)) as f64))
+              } else {
+                Err(Error::from(String::from("Calculation failed")))
+              }
+            } else {
+              Err(Error::from(String::from("Calculation failed")))
+            }
+          }
+          "<<<" => {
+            if let Var::Number(left) = conv {
+              if let Var::Number(right) = val {
+                Ok(Var::Number(((left as u32) << (*right as u32)) as f64))
+              } else {
+                Err(Error::from(String::from("Calculation failed")))
+              }
+            } else {
+              Err(Error::from(String::from("Calculation failed")))
+            }
+          }
+          ">>>" => {
+            if let Var::Number(left) = conv {
+              if let Var::Number(right) = val {
+                Ok(Var::Number(((left as u32) >> (*right as u32)) as f64))
+              } else {
+                Err(Error::from(String::from("Calculation failed")))
+              }
+            } else {
+              Err(Error::from(String::from("Calculation failed")))
+            }
+          }
+          _ => Err(Error::from(String::from("Unknown operand"))),
+        }
       }
     }
   }
 }
 // from
 impl Var {
-  pub fn from(str: &str) -> Result<Var, Error> {
+  pub fn new() -> Self {
+    Var::Null(())
+  }
+  pub fn parse(str: &str) -> Result<Self, Error> {
     let raw = clearnull(str);
     let p = raw.as_str();
     if p == "" {
-      return Ok(Var::new(()));
+      return Ok(Var::new());
     } else if !ExprValue::isexp(p) {
       {
         let res = {
@@ -427,7 +913,7 @@ impl Var {
                 None
               };
             } else {
-              opt = if let Ok(val) = parse_int::parse::<i64>(p) {
+              opt = if let Ok(val) = parse_int::parse::<i32>(p) {
                 Some(val as f64)
               } else {
                 None
@@ -437,13 +923,13 @@ impl Var {
           opt
         };
         if let Some(val) = res {
-          return Ok(Var::new(val));
+          return Ok(Var::Number(val));
         }
       }
       if p == "null" {
-        return Ok(Var::new(()));
+        return Ok(Var::new());
       } else if p == "true" || p == "false" {
-        return Ok(Var::new(p == "true"));
+        return Ok(Var::Boolean(p == "true"));
       } else if covered_with(p, '\'', '\'') || covered_with(p, '"', '"') {
         let tmp = utf8_slice::slice(p, 1, utf8_slice::len(p) - 1);
         let mut ret = String::new();
@@ -470,10 +956,10 @@ impl Var {
                       ret.push(val);
                       skip = 4;
                     } else {
-                      return Err(Error::new(String::from("Invalid unicode character")));
+                      return Err(Error::from(String::from("Invalid unicode character")));
                     }
                   } else {
-                    return Err(Error::new(String::from("Invalid unicode character")));
+                    return Err(Error::from(String::from("Invalid unicode character")));
                   }
                 }
                 _ => {
@@ -481,114 +967,113 @@ impl Var {
                 }
               }
             } else {
-              return Err(Error::new(String::from("Unexpected end of string")));
+              return Err(Error::from(String::from("Unexpected end of string")));
             }
           } else {
             ret.push(item);
           }
         }
-        return Ok(Var::new(ret));
+        return Ok(Var::String(ret));
       } else if p.starts_with("func") && p.chars().nth_back(0) == Some('}') {
-        return match FuncValue::from(p) {
-          Ok(val) => Ok(Var::new(val)),
-          Err(err) => Err(err),
-        };
+        return Ok(Var::Function(FuncValue::parse(p)?));
       } else if covered_with(p, '[', ']') {
         let tmp = split_by(utf8_slice::slice(p, 1, utf8_slice::len(p) - 1), ',');
         let mut ret: Vec<Var> = vec![];
         for item in tmp.iter() {
-          match Var::from(item.as_str()) {
-            Ok(val) => ret.push(val),
-            Err(err) => return Err(err),
-          }
+          ret.push(Var::parse(item.as_str())?);
         }
-        return Ok(Var::new(ret));
+        return Ok(Var::Array(ret));
       } else if covered_with(p, '{', '}') {
         let mut ret: BTreeMap<String, Var> = BTreeMap::new();
         let tmp = split_by(utf8_slice::slice(p, 1, utf8_slice::len(p) - 1), ',');
         for item in tmp.iter() {
           let pair = split_by(item.as_str(), ':');
           if pair.len() != 2 {
-            return Ok(Var::new(StmtValue::from(p)));
+            return Ok(Var::Statement(StmtValue::parse(p)));
           }
-          match Var::from(pair[0].as_str()) {
+          match Var::parse(pair[0].as_str()) {
             Ok(val) => {
               if let Var::String(str) = val {
-                match Var::from(pair[1].as_str()) {
+                match Var::parse(pair[1].as_str()) {
                   Ok(val) => {
                     ret.insert(str, val);
                   }
                   Err(_) => {
-                    return Ok(Var::new(StmtValue::from(p)));
+                    return Ok(Var::Statement(StmtValue::parse(p)));
                   }
                 }
               } else {
-                return Ok(Var::new(StmtValue::from(p)));
+                return Ok(Var::Statement(StmtValue::parse(p)));
               }
             }
             Err(_) => {
-              return Ok(Var::new(StmtValue::from(p)));
+              return Ok(Var::Statement(StmtValue::parse(p)));
             }
           }
         }
-        return Ok(Var::new(ret));
+        return Ok(Var::Object(ret));
       }
     }
     let mut exp = p;
     while covered_with(exp, '(', ')') {
       exp = utf8_slice::slice(exp, 1, utf8_slice::len(exp) - 1);
     }
-    return match ExprValue::from(exp) {
-      Ok(val) => Ok(Var::new(val)),
-      Err(err) => Err(err),
-    };
+    Ok(Var::Expression(ExprValue::parse(exp)?))
   }
 }
-pub trait NewVar<T> {
-  fn new(val: T) -> Var;
-}
-impl NewVar<()> for Var {
-  fn new(_: ()) -> Var {
-    Var::Null(())
-  }
-}
-impl NewVar<bool> for Var {
-  fn new(val: bool) -> Var {
-    Var::Boolean(val)
-  }
-}
-impl NewVar<f64> for Var {
-  fn new(val: f64) -> Var {
-    Var::Number(val)
-  }
-}
-impl NewVar<String> for Var {
-  fn new(val: String) -> Var {
-    Var::String(val)
-  }
-}
-impl NewVar<Vec<Var>> for Var {
-  fn new(val: Vec<Var>) -> Var {
-    Var::Array(val)
-  }
-}
-impl NewVar<BTreeMap<String, Var>> for Var {
-  fn new(val: BTreeMap<String, Var>) -> Var {
-    Var::Object(val)
-  }
-}
-impl NewVar<FuncValue> for Var {
-  fn new(val: FuncValue) -> Var {
-    Var::Function(val)
-  }
-}
-impl NewVar<StmtValue> for Var {
-  fn new(val: StmtValue) -> Var {
-    Var::Statement(val)
-  }
-}
-impl NewVar<ExprValue> for Var {
-  fn new(val: ExprValue) -> Var {
-    Var::Expression(val)
+impl ToString for Var {
+  fn to_string(&self) -> String {
+    match self {
+      Var::Null(_) => String::from("null"),
+      Var::Boolean(val) => {
+        if *val {
+          String::from("true")
+        } else {
+          String::from("false")
+        }
+      }
+      Var::Number(val) => val.to_string(),
+      Var::String(val) => {
+        let mut tmp = String::from("\"");
+        for item in val.chars() {
+          match item {
+            '\r' => tmp += "\\r",
+            '\t' => tmp += "\\t",
+            '\0' => tmp += "\\0",
+            '\n' => tmp += "\\n",
+            '\\' | '\'' | '"' => tmp += format!("\\{}", item).as_str(),
+            _ => tmp.push(item),
+          };
+        }
+        tmp + "\""
+      }
+      Var::Array(val) => {
+        let mut tmp = String::from("[");
+        for (index, item) in val.iter().enumerate() {
+          tmp += item.to_string().as_str();
+          if index + 1 < val.len() {
+            tmp.push(',');
+          }
+        }
+        tmp + "]"
+      }
+      Var::Object(val) => {
+        let mut tmp = String::from("{");
+        for (index, (key, value)) in val.iter().enumerate() {
+          tmp += format!(
+            "{}:{}",
+            Var::String(key.clone()).to_string(),
+            value.to_string()
+          )
+          .as_str();
+          if index + 1 < val.len() {
+            tmp.push(',');
+          }
+        }
+        tmp + "}"
+      }
+      Var::Function(val) => val.to_string(),
+      _ => String::from("<error-type>"),
+    }
   }
 }

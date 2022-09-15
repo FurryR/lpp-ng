@@ -1,12 +1,14 @@
 #[derive(Debug)]
 pub struct Error {
-  err: String,
+  pub err: String,
 }
 impl Error {
-  pub fn new(error: String) -> Error {
-    Error { err: error }
+  pub fn new() -> Self {
+    Error { err: String::new() }
   }
-  pub fn what(&self) -> &String {
-    &self.err
+}
+impl From<String> for Error {
+  fn from(err: String) -> Self {
+    Error { err }
   }
 }
