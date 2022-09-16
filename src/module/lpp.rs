@@ -4,19 +4,17 @@ use super::var::{covered_with, ExprValue, FuncValue, ValueType, Var};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ptr;
+use std::rc::Rc;
 #[derive(Clone)]
 pub struct Scope {
-  val: RefCell<Var>,
+  val: Rc<RefCell<Var>>,
   constant: BTreeMap<String, bool>,
 }
 impl Scope {
-  pub fn raw(&self) -> &RefCell<Var> {
-    &self.val
+  pub fn raw(&self) -> Rc<RefCell<Var>> {
+    self.val.clone()
   }
-  // pub fn raw_mut(&mut self) -> &mut Var {
-  //   &mut self.val
-  // }
-  pub fn get(&self, key: &String) -> (Option<Var>, bool) {
+  pub fn get(&self, key: &String) -> (Option<Rc<RefCell<Var>>>, bool) {
     if let Var::Object(ref val) = *self.val.borrow() {
       if let Some(value) = val.get(key) {
         if let Some(constant) = self.constant.get(key) {
@@ -31,30 +29,15 @@ impl Scope {
       panic!("self.val must be Var::Object");
     }
   }
-  // pub fn get_mut(&self, key: &String) -> (Option<&mut Var>, bool) {
-  //   if let Var::Object(ref mut val) = *self.val.borrow_mut() {
-  //     if let Some(value) = val.get_mut(key) {
-  //       if let Some(constant) = self.constant.get(key) {
-  //         (Some(value), *constant)
-  //       } else {
-  //         (Some(value), false)
-  //       }
-  //     } else {
-  //       (None, false)
-  //     }
-  //   } else {
-  //     panic!("self.val must be Var::Object");
-  //   }
-  // }
   pub fn set(&mut self, key: String, value: (Var, bool)) {
     if let Var::Object(ref mut val) = *self.val.borrow_mut() {
-      val.insert(key.clone(), value.0);
+      val.insert(key.clone(), Rc::new(RefCell::new(value.0)));
       self.constant.insert(key, value.1);
     } else {
       panic!("self.val must be Var::Object");
     }
   }
-  pub fn remove(&mut self, key: &String) -> (Option<Var>, bool) {
+  pub fn remove(&mut self, key: &String) -> (Option<Rc<RefCell<Var>>>, bool) {
     if let Var::Object(ref mut val) = *self.val.borrow_mut() {
       (
         val.remove(key),
@@ -69,10 +52,10 @@ impl Scope {
     }
   }
 }
-impl From<(BTreeMap<String, Var>, BTreeMap<String, bool>)> for Scope {
-  fn from(val: (BTreeMap<String, Var>, BTreeMap<String, bool>)) -> Self {
+impl From<(BTreeMap<String, Rc<RefCell<Var>>>, BTreeMap<String, bool>)> for Scope {
+  fn from(val: (BTreeMap<String, Rc<RefCell<Var>>>, BTreeMap<String, bool>)) -> Self {
     Scope {
-      val: RefCell::new(Var::Object(val.0)),
+      val: Rc::new(RefCell::new(Var::Object(val.0))),
       constant: val.1,
     }
   }
@@ -80,18 +63,18 @@ impl From<(BTreeMap<String, Var>, BTreeMap<String, bool>)> for Scope {
 impl Scope {
   pub fn new() -> Self {
     Scope {
-      val: RefCell::new(Var::Object(BTreeMap::new())),
+      val: Rc::new(RefCell::new(Var::Object(BTreeMap::new()))),
       constant: BTreeMap::new(),
     }
   }
 }
-pub struct Context<'a> {
-  now: &'a RefCell<Scope>,
-  global: Option<&'a RefCell<Scope>>,
-  this: Option<&'a RefCell<Var>>,
+pub struct Context {
+  now: Rc<RefCell<Scope>>,
+  global: Option<Rc<RefCell<Scope>>>,
+  this: Option<Rc<RefCell<Var>>>,
 }
-impl<'a> From<&'a RefCell<Scope>> for Context<'a> {
-  fn from(now: &'a RefCell<Scope>) -> Self {
+impl From<Rc<RefCell<Scope>>> for Context {
+  fn from(now: Rc<RefCell<Scope>>) -> Self {
     Context {
       now,
       global: None,
@@ -99,8 +82,8 @@ impl<'a> From<&'a RefCell<Scope>> for Context<'a> {
     }
   }
 }
-impl<'a> From<(&'a RefCell<Scope>, &'a RefCell<Scope>, &'a RefCell<Var>)> for Context<'a> {
-  fn from(val: (&'a RefCell<Scope>, &'a RefCell<Scope>, &'a RefCell<Var>)) -> Self {
+impl From<(Rc<RefCell<Scope>>, Rc<RefCell<Scope>>, Rc<RefCell<Var>>)> for Context {
+  fn from(val: (Rc<RefCell<Scope>>, Rc<RefCell<Scope>>, Rc<RefCell<Var>>)) -> Self {
     Context {
       now: val.0,
       global: Some(val.1),
@@ -108,20 +91,20 @@ impl<'a> From<(&'a RefCell<Scope>, &'a RefCell<Scope>, &'a RefCell<Var>)> for Co
     }
   }
 }
-impl<'a> Context<'a> {
-  pub fn now(&self) -> &RefCell<Scope> {
-    &self.now
+impl Context {
+  pub fn now(&self) -> Rc<RefCell<Scope>> {
+    self.now.clone()
   }
-  pub fn global(&self) -> &RefCell<Scope> {
-    if let Some(val) = self.global {
-      val
+  pub fn global(&self) -> Rc<RefCell<Scope>> {
+    if let Some(val) = &self.global {
+      val.clone()
     } else {
-      &self.now
+      self.now.clone()
     }
   }
-  pub fn this(&self) -> &RefCell<Var> {
-    if let Some(val) = self.this {
-      val
+  pub fn this(&self) -> Rc<RefCell<Var>> {
+    if let Some(val) = &self.this {
+      val.clone()
     } else {
       self.now.borrow().raw()
     }
@@ -136,6 +119,10 @@ pub struct NextVal {
   pub cmd: String,
   pub limit: bool,
   pub value: Var,
+}
+pub enum LppError {
+  UnexpectedReturn(RetVal),
+  Error(Error),
 }
 impl NextVal {
   pub fn new() -> Self {
@@ -154,95 +141,118 @@ pub struct NativeFunc {
 pub type Parser = Lpp;
 pub type Native = BTreeMap<String, NativeFunc>;
 pub type TableType = BTreeMap<String, fn(parser: &Parser) -> Result<RetVal, Error>>;
-pub struct Handler<'a> {
-  pub context: Context<'a>,
+pub struct Handler {
+  pub context: Context,
   pub cmd: TableType,
   pub next: NextVal,
   pub native: Native,
 }
-pub enum LazyRef<'a> {
-  Value(&'a mut Var),
-  Array((&'a mut Vec<Var>, usize)),
-  Object((&'a mut BTreeMap<String, Var>, String)),
-  ScopeVar((&'a RefCell<Scope>, String)),
-  Scope(&'a RefCell<Scope>),
+pub enum LazyRef {
+  Value(Rc<RefCell<Var>>),
+  Array((Rc<RefCell<Var>>, usize)),
+  Object((Rc<RefCell<Var>>, String)),
+  ScopeVar((Rc<RefCell<Scope>>, String)),
+  Scope(Rc<RefCell<Scope>>),
 }
-impl LazyRef<'_> {
-  pub fn create(&mut self) {
+impl LazyRef {
+  pub fn create(&self) {
     match self {
       LazyRef::Value(_) => (),
       LazyRef::Array((val, index)) => {
-        if *index >= val.len() {
-          (*val).resize(*index + 1, Var::new());
+        if let Var::Array(arr) = &*val.borrow() {
+          if *index >= arr.len() {
+            if let Var::Array(ref mut arr) = *val.borrow_mut() {
+              arr.resize(*index + 1, Rc::new(RefCell::new(Var::new())));
+            }
+          }
+        } else {
+          panic!("Cannot create in a non-Array object");
         }
       }
       LazyRef::Object((val, index)) => {
-        if !val.contains_key(index) {
-          val.insert(index.clone(), Var::new());
+        if let Var::Object(obj) = &*val.borrow() {
+          if !obj.contains_key(index) {
+            if let Var::Object(ref mut obj) = *val.borrow_mut() {
+              obj.insert(index.clone(), Rc::new(RefCell::new(Var::new())));
+            }
+          }
+        } else {
+          panic!("Cannot create in a non-Object object");
         }
       }
       LazyRef::ScopeVar((val, index)) => {
-        if let None = val.borrow().get_mut(index).0 {
+        if let None = val.borrow().get(index).0 {
           val.borrow_mut().set(index.clone(), (Var::new(), false));
         }
       }
       LazyRef::Scope(_) => (),
     }
   }
-  pub fn get_mut(&mut self) -> Option<&mut Var> {
+  pub fn get(&self) -> Option<Rc<RefCell<Var>>> {
     match self {
-      LazyRef::Value(val) => Some(val),
-      LazyRef::Array((val, index)) => val.get_mut(*index),
-      LazyRef::Object((val, index)) => val.get_mut(index),
-      LazyRef::ScopeVar((val, index)) => val.borrow().get_mut(index).0,
-      LazyRef::Scope(val) => Some(val.borrow().raw().get_mut()),
-    }
-  }
-  pub fn get(&self) -> Option<&Var> {
-    match self {
-      LazyRef::Value(val) => Some(val),
-      LazyRef::Array((val, index)) => val.get(*index),
-      LazyRef::Object((val, index)) => val.get(index),
+      LazyRef::Value(val) => Some(val.clone()),
+      LazyRef::Array((val, index)) => {
+        if let Var::Array(arr) = &*val.borrow() {
+          if let Some(rc) = arr.get(*index) {
+            Some(rc.clone())
+          } else {
+            None
+          }
+        } else {
+          panic!("Cannot get in a non-Array object");
+        }
+      }
+      LazyRef::Object((val, index)) => {
+        if let Var::Object(obj) = &*val.borrow() {
+          if let Some(rc) = obj.get(index) {
+            Some(rc.clone())
+          } else {
+            None
+          }
+        } else {
+          panic!("Cannot get in a non-Object object");
+        }
+      }
       LazyRef::ScopeVar((val, index)) => val.borrow().get(index).0,
-      LazyRef::Scope(val) => Some(&val.borrow().raw().borrow()),
+      LazyRef::Scope(val) => None,
     }
   }
 }
-impl<'a> From<&'a mut Var> for LazyRef<'a> {
-  fn from(val: &'a mut Var) -> Self {
+impl From<Rc<RefCell<Var>>> for LazyRef {
+  fn from(val: Rc<RefCell<Var>>) -> Self {
     LazyRef::Value(val)
   }
 }
-impl<'a> From<(&'a mut Vec<Var>, usize)> for LazyRef<'a> {
-  fn from(val: (&'a mut Vec<Var>, usize)) -> Self {
+impl From<(Rc<RefCell<Var>>, usize)> for LazyRef {
+  fn from(val: (Rc<RefCell<Var>>, usize)) -> Self {
     LazyRef::Array(val)
   }
 }
-impl<'a> From<(&'a mut BTreeMap<String, Var>, String)> for LazyRef<'a> {
-  fn from(val: (&'a mut BTreeMap<String, Var>, String)) -> Self {
+impl From<(Rc<RefCell<Var>>, String)> for LazyRef {
+  fn from(val: (Rc<RefCell<Var>>, String)) -> Self {
     LazyRef::Object(val)
   }
 }
-impl<'a> From<&'a RefCell<Scope>> for LazyRef<'a> {
-  fn from(val: &'a RefCell<Scope>) -> Self {
+impl From<Rc<RefCell<Scope>>> for LazyRef {
+  fn from(val: Rc<RefCell<Scope>>) -> Self {
     LazyRef::Scope(val)
   }
 }
-impl<'a> From<(&'a RefCell<Scope>, String)> for LazyRef<'a> {
-  fn from(val: (&'a RefCell<Scope>, String)) -> Self {
+impl From<(Rc<RefCell<Scope>>, String)> for LazyRef {
+  fn from(val: (Rc<RefCell<Scope>>, String)) -> Self {
     LazyRef::ScopeVar(val)
   }
 }
-pub enum RefObj<'a> {
+pub enum RefObj {
   Value(Var),
-  Ref(LazyRef<'a>),
-  Overloaded((Var, LazyRef<'a>)),
+  Ref(LazyRef),
+  Overloaded((Var, LazyRef)),
 }
-pub struct ResultObj<'a> {
-  val: RefObj<'a>,
-  pr: Option<RefObj<'a>>,
+pub struct ResultObj {
+  val: RefObj,
+  pr: Option<RefObj>,
 }
-impl ResultObj<'_> {
+impl ResultObj {
   pub fn val(&self) -> &RefObj {
     return &self.val;
   }
@@ -254,7 +264,7 @@ impl ResultObj<'_> {
     }
   }
 }
-impl Handler<'_> {
+impl Handler {
   pub fn is_keyword(&self, str: &str) -> bool {
     str != "" && self.cmd.contains_key(&str.to_string())
   }
@@ -287,7 +297,7 @@ impl Handler<'_> {
       || (!ExprValue::isexp(st.to_string().as_str()) && covered_with(st.args.as_str(), '(', ')'))
   }
 }
-impl Handler<'_> {
+impl Handler {
   pub fn exec(&mut self, value: &Parser) -> Result<RetVal, Error> {
     let retval: RetVal;
     if self.is_keyword(value.name.as_str()) {
@@ -317,12 +327,37 @@ impl Handler<'_> {
     }
     Ok(retval)
   }
+  pub fn get_member(&self, mut obj: RefObj, index: &Var) -> Result<RefObj, LppError> {
+    let find_str = if let Var::String(str) = index {
+      str.clone()
+    } else {
+      index.to_string()
+    };
+    if find_str == "this" {
+      return i;
+    } else if let Some((index, item)) = self.native.iter().find(|(index, item)| {
+      if index == find_str.as_str() {
+        Some(item)
+      } else {
+        None
+      }
+    }) {
+      let scope: Scope = Scope::new();
+      if let RefObj::Ref(obj) = i {
+        if item.use_type.is_empty()
+          || item.use_type.contains(if let Some(tmp) = obj.get() {
+          } else {
+          })
+        {}
+      }
+    }
+  }
   fn update_scope(now_scope: &Scope, temp_scope: &Scope) -> Scope {
     let mut ret = now_scope.clone();
-    if let Var::Object(now) = *now_scope.raw().borrow() {
+    if let Var::Object(now) = &*now_scope.raw().borrow() {
       for key in now.keys() {
         if let (Some(v), c) = temp_scope.get(key) {
-          ret.set(key.clone(), (v.clone(), c))
+          ret.set(key.clone(), (v.borrow().clone(), c))
         } else {
           ret.remove(key);
         }
@@ -360,19 +395,13 @@ impl Handler<'_> {
     } else {
       if let RefObj::Ref(v) = start.val() {
         if let Some(s) = v.get() {
-          ptr::eq(
-            s as *const Var,
-            &*self.context.this().borrow() as *const Var,
-          )
+          ptr::eq(s.as_ptr(), self.context.this().as_ptr())
         } else {
           false
         }
       } else if let RefObj::Overloaded(v) = start.val {
         if let Some(s) = v.1.get() {
-          std::ptr::eq(
-            s as *const Var,
-            &*self.context.this().borrow() as *const Var,
-          )
+          std::ptr::eq(s.as_ptr(), self.context.this().as_ptr())
         } else {
           false
         }
@@ -395,7 +424,7 @@ impl Handler<'_> {
           utf8_slice::len(str),
         ),
         ResultObj {
-          val: RefObj::Ref(LazyRef::Value(self.context.this().get_mut())),
+          val: RefObj::Ref(LazyRef::Value(self.context.this())),
           pr: None,
         },
       );
@@ -441,8 +470,8 @@ impl Handler<'_> {
     return ret;
   }
 }
-impl<'a> From<(Context<'a>, TableType, NextVal, Native)> for Handler<'a> {
-  fn from(val: (Context<'a>, TableType, NextVal, Native)) -> Self {
+impl From<(Context, TableType, NextVal, Native)> for Handler {
+  fn from(val: (Context, TableType, NextVal, Native)) -> Self {
     Handler {
       context: val.0,
       cmd: val.1,
@@ -451,13 +480,13 @@ impl<'a> From<(Context<'a>, TableType, NextVal, Native)> for Handler<'a> {
     }
   }
 }
-impl Context<'_> {
-  pub fn test(&mut self) -> Option<RefObj> {
-    let a = self.global().borrow().get_mut(&String::from("awa"));
-    if let Some(val) = a.0 {
-      Some(RefObj::Ref(LazyRef::Value(val)))
-    } else {
-      None
-    }
-  }
-}
+// impl Context {
+//   pub fn test(&mut self) -> Option<RefObj> {
+//     let a = self.global().borrow().get_mut(&String::from("awa"));
+//     if let Some(val) = a.0 {
+//       Some(RefObj::Ref(LazyRef::Value(val)))
+//     } else {
+//       None
+//     }
+//   }
+// }

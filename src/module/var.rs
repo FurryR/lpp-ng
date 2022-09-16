@@ -1,9 +1,11 @@
 use super::error::Error;
 use super::parse::{transfer, LppStatus, QuoteStatus};
 use parse_int;
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::convert::{TryFrom, TryInto};
 use std::i32;
+use std::rc::Rc;
 /// 语句块。
 /// 你可以以以下方式定义一个语句块：
 /// ```
@@ -453,14 +455,13 @@ impl From<String> for ExprValue {
     ExprValue::Val(val)
   }
 }
-#[derive(Clone)]
 pub enum Var {
   Null(()),
   Boolean(bool),
   Number(f64),
   String(String),
-  Array(Vec<Var>),
-  Object(BTreeMap<String, Var>),
+  Array(Vec<Rc<RefCell<Var>>>),
+  Object(BTreeMap<String, Rc<RefCell<Var>>>),
   Function(FuncValue),
   Statement(StmtValue),
   Expression(ExprValue),
@@ -475,6 +476,34 @@ pub enum ValueType {
   Function,
   Statement,
   Expression,
+}
+// clone
+impl Clone for Var {
+  fn clone(&self) -> Self {
+    match self {
+      Var::Array(val) => {
+        let mut a: Vec<Rc<RefCell<Var>>> = vec![];
+        for item in val.iter() {
+          a.push(Rc::new(RefCell::new(item.borrow().clone())));
+        }
+        Var::Array(a)
+      }
+      Var::Object(val) => {
+        let mut a: BTreeMap<String, Rc<RefCell<Var>>> = BTreeMap::new();
+        for (key, item) in val.iter() {
+          a.insert(key.clone(), Rc::new(RefCell::new(item.borrow().clone())));
+        }
+        Var::Object(a)
+      }
+      Var::Null(_) => Var::Null(()),
+      Var::Boolean(val) => Var::Boolean(val.clone()),
+      Var::Number(val) => Var::Number(val.clone()),
+      Var::String(val) => Var::String(val.clone()),
+      Var::Function(val) => Var::Function(val.clone()),
+      Var::Statement(val) => Var::Statement(val.clone()),
+      Var::Expression(val) => Var::Expression(val.clone()),
+    }
+  }
 }
 // tp
 impl Var {
@@ -500,10 +529,12 @@ impl Var {
       ValueType::Boolean => Ok(Var::Boolean(TryInto::<bool>::try_into(self)?)),
       ValueType::Number => Ok(Var::Number(TryInto::<f64>::try_into(self)?)),
       ValueType::String => Ok(Var::String(TryInto::<String>::try_into(self)?)),
-      ValueType::Array => Ok(Var::Array(TryInto::<Vec<Var>>::try_into(self)?)),
-      ValueType::Object => Ok(Var::Object(TryInto::<BTreeMap<String, Var>>::try_into(
+      ValueType::Array => Ok(Var::Array(TryInto::<Vec<Rc<RefCell<Var>>>>::try_into(
         self,
       )?)),
+      ValueType::Object => Ok(Var::Object(
+        TryInto::<BTreeMap<String, Rc<RefCell<Var>>>>::try_into(self)?,
+      )),
       _ => Err(Error::from(String::from("Conversion failed"))),
     }
   }
@@ -546,7 +577,7 @@ impl TryFrom<Var> for String {
     }
   }
 }
-impl TryFrom<Var> for Vec<Var> {
+impl TryFrom<Var> for Vec<Rc<RefCell<Var>>> {
   type Error = Error;
   fn try_from(val: Var) -> Result<Self, Self::Error> {
     match val {
@@ -555,7 +586,7 @@ impl TryFrom<Var> for Vec<Var> {
     }
   }
 }
-impl TryFrom<Var> for BTreeMap<String, Var> {
+impl TryFrom<Var> for BTreeMap<String, Rc<RefCell<Var>>> {
   type Error = Error;
   fn try_from(val: Var) -> Result<Self, Self::Error> {
     match val {
@@ -612,7 +643,7 @@ impl Var {
           if let Var::Array(right) = val {
             if left.len() == right.len() {
               Ok(left.iter().enumerate().all(|(index, item)| {
-                if let Ok(val) = item.clone().opcall(op, &right[index]) {
+                if let Ok(val) = item.borrow().clone().opcall(op, &*right[index].borrow()) {
                   if let Var::Boolean(val) = val {
                     val
                   } else {
@@ -634,7 +665,7 @@ impl Var {
             if left.len() == right.len() {
               Ok(left.iter().all(|(key, value)| {
                 if let Some(r_val) = right.get(key) {
-                  if let Ok(val) = value.clone().opcall(op, r_val) {
+                  if let Ok(val) = value.borrow().clone().opcall(op, &*r_val.borrow()) {
                     if let Var::Boolean(val) = val {
                       val
                     } else {
@@ -978,13 +1009,13 @@ impl Var {
         return Ok(Var::Function(FuncValue::parse(p)?));
       } else if covered_with(p, '[', ']') {
         let tmp = split_by(utf8_slice::slice(p, 1, utf8_slice::len(p) - 1), ',');
-        let mut ret: Vec<Var> = vec![];
+        let mut ret: Vec<Rc<RefCell<Var>>> = vec![];
         for item in tmp.iter() {
-          ret.push(Var::parse(item.as_str())?);
+          ret.push(Rc::new(RefCell::new(Var::parse(item.as_str())?)));
         }
         return Ok(Var::Array(ret));
       } else if covered_with(p, '{', '}') {
-        let mut ret: BTreeMap<String, Var> = BTreeMap::new();
+        let mut ret: BTreeMap<String, Rc<RefCell<Var>>> = BTreeMap::new();
         let tmp = split_by(utf8_slice::slice(p, 1, utf8_slice::len(p) - 1), ',');
         for item in tmp.iter() {
           let pair = split_by(item.as_str(), ':');
@@ -996,7 +1027,7 @@ impl Var {
               if let Var::String(str) = val {
                 match Var::parse(pair[1].as_str()) {
                   Ok(val) => {
-                    ret.insert(str, val);
+                    ret.insert(str, Rc::new(RefCell::new(val)));
                   }
                   Err(_) => {
                     return Ok(Var::Statement(StmtValue::parse(p)));
@@ -1050,7 +1081,7 @@ impl ToString for Var {
       Var::Array(val) => {
         let mut tmp = String::from("[");
         for (index, item) in val.iter().enumerate() {
-          tmp += item.to_string().as_str();
+          tmp += item.borrow().to_string().as_str();
           if index + 1 < val.len() {
             tmp.push(',');
           }
@@ -1063,7 +1094,7 @@ impl ToString for Var {
           tmp += format!(
             "{}:{}",
             Var::String(key.clone()).to_string(),
-            value.to_string()
+            value.borrow().to_string()
           )
           .as_str();
           if index + 1 < val.len() {
