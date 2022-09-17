@@ -5,7 +5,6 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ptr;
 use std::rc::Rc;
-#[derive(Clone)]
 pub struct Scope {
   val: Rc<RefCell<Var>>,
   constant: BTreeMap<String, bool>,
@@ -250,18 +249,14 @@ pub enum RefObj {
 }
 pub struct ResultObj {
   val: RefObj,
-  pr: Option<RefObj>,
+  pr: RefObj,
 }
 impl ResultObj {
   pub fn val(&self) -> &RefObj {
-    return &self.val;
+    &self.val
   }
   pub fn pr(&self) -> &RefObj {
-    if let Some(ref val) = self.pr {
-      val
-    } else {
-      &self.val
-    }
+    &self.pr
   }
 }
 impl Handler {
@@ -298,11 +293,11 @@ impl Handler {
   }
 }
 impl Handler {
-  pub fn exec(&mut self, value: &Parser) -> Result<RetVal, Error> {
+  pub fn exec(&mut self, value: &Parser) -> Result<Var, LppError> {
     let retval: RetVal;
     if self.is_keyword(value.name.as_str()) {
       if self.next.cmd != value.name && self.next.limit {
-        return Err(Error::from(String::from("Invalid statement")));
+        return Err(LppError::Error(Error::from(String::from("Invalid statement"))));
       }
       if self.next.cmd != value.name {
         self.next = NextVal::new();
@@ -334,7 +329,7 @@ impl Handler {
       index.to_string()
     };
     if find_str == "this" {
-      return i;
+      obj
     } else if let Some((index, item)) = self.native.iter().find(|(index, item)| {
       if index == find_str.as_str() {
         Some(item)
@@ -343,7 +338,7 @@ impl Handler {
       }
     }) {
       let scope: Scope = Scope::new();
-      if let RefObj::Ref(obj) = i {
+      if let RefObj::Ref(obj) = obj {
         if item.use_type.is_empty()
           || item.use_type.contains(if let Some(tmp) = obj.get() {
           } else {
@@ -388,7 +383,7 @@ impl Handler {
     }
     temp
   }
-  fn var_index(&mut self, access: &str, mut start: ResultObj) -> Result<ResultObj, Error> {
+  fn var_index(&mut self, access: &str, mut start: ResultObj) -> Result<ResultObj, LppError> {
     let visit = Self::name_split(access);
     let this_keep = if let RefObj::Value(_) = start.val() {
       false
