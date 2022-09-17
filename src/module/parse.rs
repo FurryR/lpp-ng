@@ -79,12 +79,17 @@ pub fn transfer_rev(nowchar: char, lastchar: char, status: &mut LppStatus) {
     status.brace += 1;
   }
 }
-#[derive(Debug)]
 pub struct Lpp {
-  pub name: String,
-  pub args: String,
+  name: String,
+  args: String,
 }
 impl Lpp {
+  pub fn name(&self) -> &String {
+    &self.name
+  }
+  pub fn args(&self) -> &String {
+    &self.args
+  }
   pub fn new() -> Self {
     Lpp {
       name: String::new(),

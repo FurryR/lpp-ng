@@ -3,12 +3,12 @@ pub struct Error {
   pub err: String,
 }
 impl Error {
-  pub fn new() -> Self {
-    Error { err: String::new() }
+  pub fn new(err: String) -> Self {
+    Error { err }
   }
 }
-impl From<String> for Error {
-  fn from(err: String) -> Self {
-    Error { err }
+impl From<&str> for Error {
+  fn from(err: &str) -> Self {
+    Error { err: err.to_string() }
   }
 }

@@ -189,7 +189,7 @@ impl TryFrom<(Vec<ArgItem>, StmtValue)> for FuncValue {
     let mut flag = false;
     for item in val.0.iter() {
       if item.value == "" && flag {
-        return Err(Error::from(String::from("Syntax Error")));
+        return Err(Error::from("Syntax Error"));
       }
       if item.value != "" {
         flag = true;
@@ -241,7 +241,7 @@ impl FuncValue {
         }
         nowindex += 1;
         if str.chars().nth(nowindex) != Some('{') {
-          return Err(Error::from(String::from("Syntax error")));
+          return Err(Error::from("Syntax error"));
         }
         temp.clear();
         status = LppStatus::new();
@@ -254,7 +254,7 @@ impl FuncValue {
         }
         Ok(FuncValue::try_from((arg, StmtValue::parse(temp.as_str())))?)
       }
-      None => Err(Error::from(String::from("Syntax error"))),
+      None => Err(Error::from("Syntax error")),
     }
   }
 }
@@ -433,7 +433,7 @@ impl ExprValue {
       opindex = utf8_slice::len(str) - utf8_slice::len(temp.as_str());
     }
     if status.brace != 0 || status.quote != QuoteStatus::None {
-      return Err(Error::from(String::from("Invalid expression")));
+      return Err(Error::from("Invalid expression"));
     }
     if minpr == i32::MAX {
       return Ok(ExprValue::from(str.to_string()));
@@ -466,6 +466,7 @@ pub enum Var {
   Statement(StmtValue),
   Expression(ExprValue),
 }
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ValueType {
   Null,
   Boolean,
@@ -535,7 +536,7 @@ impl Var {
       ValueType::Object => Ok(Var::Object(
         TryInto::<BTreeMap<String, Rc<RefCell<Var>>>>::try_into(self)?,
       )),
-      _ => Err(Error::from(String::from("Conversion failed"))),
+      _ => Err(Error::from("Conversion failed")),
     }
   }
 }
@@ -544,7 +545,7 @@ impl TryFrom<Var> for () {
   fn try_from(val: Var) -> Result<(), Self::Error> {
     match val {
       Var::Null(_) => Ok(()),
-      _ => Err(Error::from(String::from("Conversion failed"))),
+      _ => Err(Error::from("Conversion failed")),
     }
   }
 }
@@ -554,7 +555,7 @@ impl TryFrom<Var> for bool {
     match val {
       Var::Boolean(val) => Ok(val),
       Var::Number(val) => Ok(val != 0.0),
-      _ => Err(Error::from(String::from("Conversion failed"))),
+      _ => Err(Error::from("Conversion failed")),
     }
   }
 }
@@ -564,7 +565,7 @@ impl TryFrom<Var> for f64 {
     match val {
       Var::Number(val) => Ok(val),
       Var::Boolean(val) => Ok(if val { 1.0 } else { 0.0 }),
-      _ => Err(Error::from(String::from("Conversion failed"))),
+      _ => Err(Error::from("Conversion failed")),
     }
   }
 }
@@ -582,7 +583,7 @@ impl TryFrom<Var> for Vec<Rc<RefCell<Var>>> {
   fn try_from(val: Var) -> Result<Self, Self::Error> {
     match val {
       Var::Array(val) => Ok(val),
-      _ => Err(Error::from(String::from("Conversion failed"))),
+      _ => Err(Error::from("Conversion failed")),
     }
   }
 }
@@ -591,7 +592,7 @@ impl TryFrom<Var> for BTreeMap<String, Rc<RefCell<Var>>> {
   fn try_from(val: Var) -> Result<Self, Self::Error> {
     match val {
       Var::Object(val) => Ok(val),
-      _ => Err(Error::from(String::from("Conversion failed"))),
+      _ => Err(Error::from("Conversion failed")),
     }
   }
 }
@@ -605,7 +606,7 @@ impl Var {
       '-' => Ok(Var::Number(-(TryInto::<f64>::try_into(self)?))),
       '+' => Ok(Var::Number(TryInto::<f64>::try_into(self)?)),
       '!' => Ok(Var::Boolean(!(TryInto::<bool>::try_into(self)?))),
-      _ => Err(Error::from(String::from("Unknown operand"))),
+      _ => Err(Error::from("Unknown operand")),
     }
   }
   fn opcmp(&self, op: &str, val: &Var) -> Result<bool, Error> {
@@ -731,7 +732,7 @@ impl Var {
       },
       ">=" => Ok(!(self.opcmp("<", val)?)),
       "<=" => Ok(!(self.opcmp(">", val)?)),
-      _ => Err(Error::from(String::from("Unknown operand"))),
+      _ => Err(Error::from("Unknown operand")),
     }
   }
   pub fn opcall(self, op: &str, val: &Var) -> Result<Var, Error> {
@@ -752,14 +753,14 @@ impl Var {
               if let Var::Number(right) = val {
                 Ok(Var::Number(left + right))
               } else {
-                Err(Error::from(String::from("Calculation failed")))
+                Err(Error::from("Calculation failed"))
               }
             }
             Var::String(left) => {
               if let Var::String(right) = val {
                 Ok(Var::String(left + right.as_str()))
               } else {
-                Err(Error::from(String::from("Calculation failed")))
+                Err(Error::from("Calculation failed"))
               }
             }
             Var::Array(left) => {
@@ -768,20 +769,20 @@ impl Var {
                 s.append(&mut right.clone());
                 Ok(Var::Array(s))
               } else {
-                Err(Error::from(String::from("Calculation failed")))
+                Err(Error::from("Calculation failed"))
               }
             }
-            _ => Err(Error::from(String::from("Calculation failed"))),
+            _ => Err(Error::from("Calculation failed")),
           },
           "-" => {
             if let Var::Number(left) = conv {
               if let Var::Number(right) = val {
                 Ok(Var::Number(left - right))
               } else {
-                Err(Error::from(String::from("Calculation failed")))
+                Err(Error::from("Calculation failed"))
               }
             } else {
-              Err(Error::from(String::from("Calculation failed")))
+              Err(Error::from("Calculation failed"))
             }
           }
           "*" => {
@@ -789,10 +790,10 @@ impl Var {
               if let Var::Number(right) = val {
                 Ok(Var::Number(left * right))
               } else {
-                Err(Error::from(String::from("Calculation failed")))
+                Err(Error::from("Calculation failed"))
               }
             } else {
-              Err(Error::from(String::from("Calculation failed")))
+              Err(Error::from("Calculation failed"))
             }
           }
           "/" => {
@@ -804,10 +805,10 @@ impl Var {
                   Ok(Var::Number(f64::NAN))
                 }
               } else {
-                Err(Error::from(String::from("Calculation failed")))
+                Err(Error::from("Calculation failed"))
               }
             } else {
-              Err(Error::from(String::from("Calculation failed")))
+              Err(Error::from("Calculation failed"))
             }
           }
           "%" => {
@@ -819,10 +820,10 @@ impl Var {
                   Ok(Var::Number(f64::NAN))
                 }
               } else {
-                Err(Error::from(String::from("Calculation failed")))
+                Err(Error::from("Calculation failed"))
               }
             } else {
-              Err(Error::from(String::from("Calculation failed")))
+              Err(Error::from("Calculation failed"))
             }
           }
           "&" => {
@@ -830,10 +831,10 @@ impl Var {
               if let Var::Number(right) = val {
                 Ok(Var::Number(((left as i32) & (*right as i32)) as f64))
               } else {
-                Err(Error::from(String::from("Calculation failed")))
+                Err(Error::from("Calculation failed"))
               }
             } else {
-              Err(Error::from(String::from("Calculation failed")))
+              Err(Error::from("Calculation failed"))
             }
           }
           "|" => {
@@ -841,10 +842,10 @@ impl Var {
               if let Var::Number(right) = val {
                 Ok(Var::Number(((left as i32) | (*right as i32)) as f64))
               } else {
-                Err(Error::from(String::from("Calculation failed")))
+                Err(Error::from("Calculation failed"))
               }
             } else {
-              Err(Error::from(String::from("Calculation failed")))
+              Err(Error::from("Calculation failed"))
             }
           }
           "^" => {
@@ -852,10 +853,10 @@ impl Var {
               if let Var::Number(right) = val {
                 Ok(Var::Number(((left as i32) ^ (*right as i32)) as f64))
               } else {
-                Err(Error::from(String::from("Calculation failed")))
+                Err(Error::from("Calculation failed"))
               }
             } else {
-              Err(Error::from(String::from("Calculation failed")))
+              Err(Error::from("Calculation failed"))
             }
           }
           "<<" => {
@@ -863,10 +864,10 @@ impl Var {
               if let Var::Number(right) = val {
                 Ok(Var::Number(((left as i32) << (*right as i32)) as f64))
               } else {
-                Err(Error::from(String::from("Calculation failed")))
+                Err(Error::from("Calculation failed"))
               }
             } else {
-              Err(Error::from(String::from("Calculation failed")))
+              Err(Error::from("Calculation failed"))
             }
           }
           ">>" => {
@@ -874,10 +875,10 @@ impl Var {
               if let Var::Number(right) = val {
                 Ok(Var::Number(((left as i32) >> (*right as i32)) as f64))
               } else {
-                Err(Error::from(String::from("Calculation failed")))
+                Err(Error::from("Calculation failed"))
               }
             } else {
-              Err(Error::from(String::from("Calculation failed")))
+              Err(Error::from("Calculation failed"))
             }
           }
           "<<<" => {
@@ -885,10 +886,10 @@ impl Var {
               if let Var::Number(right) = val {
                 Ok(Var::Number(((left as u32) << (*right as u32)) as f64))
               } else {
-                Err(Error::from(String::from("Calculation failed")))
+                Err(Error::from("Calculation failed"))
               }
             } else {
-              Err(Error::from(String::from("Calculation failed")))
+              Err(Error::from("Calculation failed"))
             }
           }
           ">>>" => {
@@ -896,13 +897,13 @@ impl Var {
               if let Var::Number(right) = val {
                 Ok(Var::Number(((left as u32) >> (*right as u32)) as f64))
               } else {
-                Err(Error::from(String::from("Calculation failed")))
+                Err(Error::from("Calculation failed"))
               }
             } else {
-              Err(Error::from(String::from("Calculation failed")))
+              Err(Error::from("Calculation failed"))
             }
           }
-          _ => Err(Error::from(String::from("Unknown operand"))),
+          _ => Err(Error::from("Unknown operand")),
         }
       }
     }
@@ -987,10 +988,10 @@ impl Var {
                       ret.push(val);
                       skip = 4;
                     } else {
-                      return Err(Error::from(String::from("Invalid unicode character")));
+                      return Err(Error::from("Invalid unicode character"));
                     }
                   } else {
-                    return Err(Error::from(String::from("Invalid unicode character")));
+                    return Err(Error::from("Invalid unicode character"));
                   }
                 }
                 _ => {
@@ -998,7 +999,7 @@ impl Var {
                 }
               }
             } else {
-              return Err(Error::from(String::from("Unexpected end of string")));
+              return Err(Error::from("Unexpected end of string"));
             }
           } else {
             ret.push(item);

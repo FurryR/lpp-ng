@@ -1,5 +1,5 @@
 use super::error::Error;
-use super::parse::{transfer, Lpp, LppStatus, QuoteStatus};
+use super::parse::{transfer, LppStatus, QuoteStatus};
 use super::var::{covered_with, ExprValue, FuncValue, ValueType, Var};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -132,19 +132,27 @@ impl NextVal {
     }
   }
 }
+#[derive(Clone)]
 pub struct NativeFunc {
   pub use_type: BTreeSet<ValueType>,
   pub func: FuncValue,
   pub isval: bool,
 }
-pub type Parser = Lpp;
-pub type Native = BTreeMap<String, NativeFunc>;
-pub type TableType = BTreeMap<String, fn(parser: &Parser) -> Result<RetVal, Error>>;
-pub struct Handler {
+pub trait ParserInterface {
+  fn name(&self) -> &String;
+  fn args(&self) -> &String;
+  fn new() -> Self;
+  fn to_string(&self) -> String;
+  fn parse(str: &str) -> Self;
+}
+pub trait CodeSplitInterface {
+  fn code_split(str: &str) -> Vec<String>;
+}
+pub struct Handler<Parser> {
   pub context: Context,
-  pub cmd: TableType,
-  pub next: NextVal,
-  pub native: Native,
+  pub cmd: BTreeMap<String, fn(parser: &Parser) -> Result<Var, LppError>>,
+  pub next: RefCell<NextVal>,
+  pub native: BTreeMap<String, NativeFunc>,
 }
 pub enum LazyRef {
   Value(Rc<RefCell<Var>>),
@@ -259,7 +267,10 @@ impl ResultObj {
     &self.pr
   }
 }
-impl Handler {
+impl<Parser: ParserInterface> Handler<Parser>
+where
+  Handler<Parser>: CodeSplitInterface,
+{
   pub fn is_keyword(&self, str: &str) -> bool {
     str != "" && self.cmd.contains_key(&str.to_string())
   }
@@ -288,39 +299,63 @@ impl Handler {
     }
   }
   pub fn is_statement(&self, st: &Parser) -> bool {
-    self.is_keyword(st.name.as_str())
-      || (!ExprValue::isexp(st.to_string().as_str()) && covered_with(st.args.as_str(), '(', ')'))
+    self.is_keyword(st.name().as_str())
+      || (!ExprValue::isexp(st.to_string().as_str()) && covered_with(st.args().as_str(), '(', ')'))
   }
 }
-impl Handler {
-  pub fn exec(&mut self, value: &Parser) -> Result<Var, LppError> {
-    let retval: RetVal;
-    if self.is_keyword(value.name.as_str()) {
-      if self.next.cmd != value.name && self.next.limit {
-        return Err(LppError::Error(Error::from(String::from("Invalid statement"))));
+impl<Parser: ParserInterface> Handler<Parser>
+where
+  Handler<Parser>: CodeSplitInterface,
+{
+  pub fn exec(&self, value: &Parser) -> Result<Var, LppError> {
+    let retval: Var;
+    if self.is_keyword(value.name().as_str()) {
+      if self.next.borrow().cmd != *value.name() && self.next.borrow().limit {
+        return Err(LppError::Error(Error::from("Invalid statement")));
       }
-      if self.next.cmd != value.name {
-        self.next = NextVal::new();
+      if self.next.borrow().cmd != *value.name() {
+        *self.next.borrow_mut() = NextVal::new();
       }
       retval = self
         .cmd
-        .get(&value.name)
+        .get(value.name())
         .expect("Keyword implement not found")(value)?;
     } else if self.cmd.contains_key("") {
-      if self.next.cmd != "" && self.next.limit {
-        return Err(Error::from(String::from("Invalid statement")));
+      if self.next.borrow().cmd != "" && self.next.borrow().limit {
+        return Err(LppError::Error(Error::from("Invalid statement")));
       }
-      if self.next.cmd != value.name {
-        self.next = NextVal::new();
+      if self.next.borrow().cmd != *value.name() {
+        *self.next.borrow_mut() = NextVal::new();
       }
       retval = self
         .cmd
         .get(&String::from(""))
         .expect("Default implement not found")(value)?;
     } else {
-      return Err(Error::from(String::from("Invalid statement")));
+      return Err(LppError::Error(Error::from("Invalid statement")));
     }
     Ok(retval)
+  }
+  pub fn runfunc(&self, func: &FuncValue, args: Vec<Var>) -> Result<Var, LppError> {
+    let mut scope = Scope::new();
+    let mut arguments: Vec<Rc<RefCell<Var>>> = vec![];
+    let code = Self::code_split(func.value.value.as_str());
+    for (index, item) in func.args.iter().enumerate() {
+      if args.len() > index {
+        //let v = self.expr(Var::parse(item.value.as_str()))?;
+        arguments.push(Rc::new(RefCell::new(args[index].clone())));
+        scope.set(item.name.clone(), (args[index].clone(), false));
+      } else {
+        if item.value == "" {
+          return Err(LppError::Error(Error::from("Too few arguments given")));
+        }
+
+        let v = self.expr(Var::parse(item.value.as_str()))?;
+        arguments.push(Rc::new(RefCell::new(v.clone())));
+        scope.set(item.name.clone(), (v.clone(), false));
+      }
+    }
+    //a.set(, value)
   }
   pub fn get_member(&self, mut obj: RefObj, index: &Var) -> Result<RefObj, LppError> {
     let find_str = if let Var::String(str) = index {
@@ -329,38 +364,42 @@ impl Handler {
       index.to_string()
     };
     if find_str == "this" {
-      obj
-    } else if let Some((index, item)) = self.native.iter().find(|(index, item)| {
-      if index == find_str.as_str() {
-        Some(item)
-      } else {
-        None
-      }
-    }) {
+      Ok(obj)
+    } else if let Some((index, item)) = self.native.iter().find(|(index, _)| **index == find_str) {
       let scope: Scope = Scope::new();
       if let RefObj::Ref(obj) = obj {
         if item.use_type.is_empty()
-          || item.use_type.contains(if let Some(tmp) = obj.get() {
+          || if let Some(tmp) = obj.get() {
+            item.use_type.contains(&tmp.borrow().tp())
           } else {
-          })
-        {}
+            false
+          }
+        {
+          if item.isval {
+            let a = Handler::<Parser>::from((
+              Context::from((self.context.now(), self.context.global())),
+              self.cmd.clone(),
+              NextVal::new(),
+              self.native.clone(),
+            ));
+          }
+        }
       }
     }
   }
-  fn update_scope(now_scope: &Scope, temp_scope: &Scope) -> Scope {
-    let mut ret = now_scope.clone();
-    if let Var::Object(now) = &*now_scope.raw().borrow() {
-      for key in now.keys() {
-        if let (Some(v), c) = temp_scope.get(key) {
-          ret.set(key.clone(), (v.borrow().clone(), c))
+  fn update_scope(now: Scope, temp: &Scope) -> Scope {
+    if let Var::Object(obj) = &*now.raw().borrow() {
+      for item in obj.keys().cloned().collect::<Vec<String>>() {
+        if let (Some(v), c) = temp.get(&item) {
+          now.set(item, (v.borrow().clone(), c))
         } else {
-          ret.remove(key);
+          now.remove(&item);
         }
       }
+      now
     } else {
       panic!("Scope.raw() must be Var::Object")
     }
-    ret
   }
   fn firstname(str: &str) -> String {
     let mut temp = String::new();
@@ -383,7 +422,7 @@ impl Handler {
     }
     temp
   }
-  fn var_index(&mut self, access: &str, mut start: ResultObj) -> Result<ResultObj, LppError> {
+  fn var_index(&self, access: &str, mut start: ResultObj) -> Result<ResultObj, LppError> {
     let visit = Self::name_split(access);
     let this_keep = if let RefObj::Value(_) = start.val() {
       false
@@ -404,15 +443,15 @@ impl Handler {
         false
       }
     };
-    Err(Error::from(String::new()))
+    Err(LppError::Error(Error::from("")))
   }
-  fn get_object(&mut self, str: &str) -> Result<ResultObj, Error> {
+  fn get_object(&self, str: &str) -> Result<ResultObj, LppError> {
     let first_name = Self::firstname(str);
     if first_name == "" {
-      return Err(Error::from(String::from("Syntax error")));
+      return Err(LppError::Error(Error::from("Syntax error")));
     }
     if first_name == "this" {
-      return self.var_index(
+      self.var_index(
         utf8_slice::slice(
           str,
           utf8_slice::len(first_name.as_str()),
@@ -420,11 +459,11 @@ impl Handler {
         ),
         ResultObj {
           val: RefObj::Ref(LazyRef::Value(self.context.this())),
-          pr: None,
+          pr: RefObj::Ref(LazyRef::Value(self.context.this())),
         },
       );
     }
-    Err(Error::from(String::from("Syntax error")))
+    Err(LppError::Error(Error::from("Syntax error")))
   }
   fn name_split(str: &str) -> Vec<String> {
     let mut ret: Vec<String> = vec![];
@@ -465,12 +504,26 @@ impl Handler {
     return ret;
   }
 }
-impl From<(Context, TableType, NextVal, Native)> for Handler {
-  fn from(val: (Context, TableType, NextVal, Native)) -> Self {
+impl<Parser: ParserInterface>
+  From<(
+    Context,
+    BTreeMap<String, fn(parser: &Parser) -> Result<Var, LppError>>,
+    NextVal,
+    BTreeMap<String, NativeFunc>,
+  )> for Handler<Parser>
+{
+  fn from(
+    val: (
+      Context,
+      BTreeMap<String, fn(parser: &Parser) -> Result<Var, LppError>>,
+      NextVal,
+      BTreeMap<String, NativeFunc>,
+    ),
+  ) -> Self {
     Handler {
       context: val.0,
       cmd: val.1,
-      next: val.2,
+      next: RefCell::new(val.2),
       native: val.3,
     }
   }
