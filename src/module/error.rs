@@ -9,6 +9,8 @@ impl Error {
 }
 impl From<&str> for Error {
   fn from(err: &str) -> Self {
-    Error { err: err.to_string() }
+    Error {
+      err: err.to_string(),
+    }
   }
 }

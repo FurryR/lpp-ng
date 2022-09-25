@@ -4,7 +4,7 @@ use super::var::{covered_with, ExprValue, FuncValue, ValueType, Var};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ptr;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 pub struct Scope {
   val: Rc<RefCell<Var>>,
   constant: BTreeMap<String, bool>,
@@ -68,16 +68,16 @@ impl Scope {
   }
 }
 pub struct Context {
-  now: Rc<RefCell<Scope>>,
-  global: Option<Rc<RefCell<Scope>>>,
-  this: Option<Rc<RefCell<Var>>>,
+  pub now: Rc<RefCell<Scope>>,
+  pub global: Rc<RefCell<Scope>>,
+  pub this: Weak<RefCell<Var>>,
 }
 impl From<Rc<RefCell<Scope>>> for Context {
   fn from(now: Rc<RefCell<Scope>>) -> Self {
     Context {
       now,
-      global: None,
-      this: None,
+      global: now.clone(),
+      this: now.borrow().raw(),
     }
   }
 }
@@ -85,32 +85,12 @@ impl From<(Rc<RefCell<Scope>>, Rc<RefCell<Scope>>, Rc<RefCell<Var>>)> for Contex
   fn from(val: (Rc<RefCell<Scope>>, Rc<RefCell<Scope>>, Rc<RefCell<Var>>)) -> Self {
     Context {
       now: val.0,
-      global: Some(val.1),
-      this: Some(val.2),
-    }
-  }
-}
-impl Context {
-  pub fn now(&self) -> Rc<RefCell<Scope>> {
-    self.now.clone()
-  }
-  pub fn global(&self) -> Rc<RefCell<Scope>> {
-    if let Some(val) = &self.global {
-      val.clone()
-    } else {
-      self.now.clone()
-    }
-  }
-  pub fn this(&self) -> Rc<RefCell<Var>> {
-    if let Some(val) = &self.this {
-      val.clone()
-    } else {
-      self.now.borrow().raw()
+      global: val.1,
+      this: val.2,
     }
   }
 }
 pub enum RetVal {
-  CalcValue(Var),
   RetValue(Var),
   ThrowValue(Var),
 }
@@ -155,11 +135,11 @@ pub struct Handler<Parser> {
   pub native: BTreeMap<String, NativeFunc>,
 }
 pub enum LazyRef {
-  Value(Rc<RefCell<Var>>),
-  Array((Rc<RefCell<Var>>, usize)),
-  Object((Rc<RefCell<Var>>, String)),
-  ScopeVar((Rc<RefCell<Scope>>, String)),
-  Scope(Rc<RefCell<Scope>>),
+  Value(Weak<RefCell<Var>>),
+  Array((Weak<RefCell<Var>>, usize)),
+  Object((Weak<RefCell<Var>>, String)),
+  ScopeVar((Weak<RefCell<Scope>>, String)),
+  Scope(Weak<RefCell<Scope>>),
 }
 impl LazyRef {
   pub fn create(&self) {
@@ -195,7 +175,7 @@ impl LazyRef {
       LazyRef::Scope(_) => (),
     }
   }
-  pub fn get(&self) -> Option<Rc<RefCell<Var>>> {
+  pub fn get(&self) -> Weak<RefCell<Var>> {
     match self {
       LazyRef::Value(val) => Some(val.clone()),
       LazyRef::Array((val, index)) => {
@@ -349,12 +329,12 @@ where
         if item.value == "" {
           return Err(LppError::Error(Error::from("Too few arguments given")));
         }
-
         let v = self.expr(Var::parse(item.value.as_str()))?;
         arguments.push(Rc::new(RefCell::new(v.clone())));
         scope.set(item.name.clone(), (v.clone(), false));
       }
     }
+    scope.set(String::from("arguments"), (Var::Array(arguments), false))
     //a.set(, value)
   }
   pub fn get_member(&self, mut obj: RefObj, index: &Var) -> Result<RefObj, LppError> {
@@ -377,7 +357,7 @@ where
         {
           if item.isval {
             let a = Handler::<Parser>::from((
-              Context::from((self.context.now(), self.context.global())),
+              Context::from((self.context.now, self.context.global)),
               self.cmd.clone(),
               NextVal::new(),
               self.native.clone(),

@@ -478,34 +478,6 @@ pub enum ValueType {
   Statement,
   Expression,
 }
-// clone
-impl Clone for Var {
-  fn clone(&self) -> Self {
-    match self {
-      Var::Array(val) => {
-        let mut a: Vec<Rc<RefCell<Var>>> = vec![];
-        for item in val.iter() {
-          a.push(Rc::new(RefCell::new(item.borrow().clone())));
-        }
-        Var::Array(a)
-      }
-      Var::Object(val) => {
-        let mut a: BTreeMap<String, Rc<RefCell<Var>>> = BTreeMap::new();
-        for (key, item) in val.iter() {
-          a.insert(key.clone(), Rc::new(RefCell::new(item.borrow().clone())));
-        }
-        Var::Object(a)
-      }
-      Var::Null(_) => Var::Null(()),
-      Var::Boolean(val) => Var::Boolean(val.clone()),
-      Var::Number(val) => Var::Number(val.clone()),
-      Var::String(val) => Var::String(val.clone()),
-      Var::Function(val) => Var::Function(val.clone()),
-      Var::Statement(val) => Var::Statement(val.clone()),
-      Var::Expression(val) => Var::Expression(val.clone()),
-    }
-  }
-}
 // tp
 impl Var {
   pub fn tp(&self) -> ValueType {
@@ -516,9 +488,36 @@ impl Var {
       Var::String(_) => ValueType::String,
       Var::Array(_) => ValueType::Array,
       Var::Object(_) => ValueType::Object,
-      Var::Function(_) => ValueType::Object,
+      Var::Function(_) => ValueType::Function,
       Var::Statement(_) => ValueType::Statement,
       Var::Expression(_) => ValueType::Expression,
+    }
+  }
+}
+impl Clone for Var {
+  fn clone(&self) -> Self {
+    match self {
+      Var::Null(_) => Var::Null(()),
+      Var::Boolean(v) => Var::Boolean(*v),
+      Var::Number(v) => Var::Number(*v),
+      Var::String(v) => Var::String(v.clone()),
+      Var::Array(v) => {
+        let mut a = vec![];
+        for item in v.iter() {
+          a.push(Rc::new(RefCell::new(item.borrow().clone())));
+        }
+        Var::Array(a)
+      }
+      Var::Object(v) => {
+        let mut a = BTreeMap::new();
+        for (key, value) in v.iter() {
+          a.insert(key.clone(), Rc::new(RefCell::new(value.borrow().clone())));
+        }
+        Var::Object(a)
+      }
+      Var::Function(v) => Var::Function(v.clone()),
+      Var::Statement(v) => Var::Statement(v.clone()),
+      Var::Expression(v) => Var::Expression(v.clone()),
     }
   }
 }
