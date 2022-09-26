@@ -77,7 +77,7 @@ impl From<Rc<RefCell<Scope>>> for Context {
     Context {
       now,
       global: now.clone(),
-      this: now.borrow().raw(),
+      this: Rc::downgrade(&now.borrow().raw()),
     }
   }
 }
@@ -86,7 +86,7 @@ impl From<(Rc<RefCell<Scope>>, Rc<RefCell<Scope>>, Rc<RefCell<Var>>)> for Contex
     Context {
       now: val.0,
       global: val.1,
-      this: val.2,
+      this: Rc::downgrade(&val.2),
     }
   }
 }
@@ -142,37 +142,68 @@ pub enum LazyRef {
   Scope(Weak<RefCell<Scope>>),
 }
 impl LazyRef {
-  pub fn create(&self) {
+  pub fn get_mut(&mut self) -> Option<Rc<RefCell<Var>>> {
     match self {
-      LazyRef::Value(_) => (),
+      LazyRef::Value(val) => {
+        let tmp = val.upgrade();
+        if let Some(rc) = tmp {
+          *self = LazyRef::Value(rc.clone());
+          Some(rc)
+        } else {
+          None
+        }
+      }
       LazyRef::Array((val, index)) => {
-        if let Var::Array(arr) = &*val.borrow() {
-          if *index >= arr.len() {
-            if let Var::Array(ref mut arr) = *val.borrow_mut() {
-              arr.resize(*index + 1, Rc::new(RefCell::new(Var::new())));
+        if let Some(ptr) = val.upgrade() {
+          if let Var::Array(arr) = &*ptr.borrow() {
+            if *index >= arr.len() {
+              if let Var::Array(ref mut arr) = *ptr.borrow_mut() {
+                arr.resize(*index + 1, Rc::new(RefCell::new(Var::new())));
+              }
             }
+            if let Some(value) = arr.get(*index) {
+              Some(value.clone())
+            } else {
+              None
+            }
+          } else {
+            panic!("Cannot create in a non-Array object");
           }
         } else {
-          panic!("Cannot create in a non-Array object");
+          None
         }
       }
       LazyRef::Object((val, index)) => {
-        if let Var::Object(obj) = &*val.borrow() {
-          if !obj.contains_key(index) {
-            if let Var::Object(ref mut obj) = *val.borrow_mut() {
-              obj.insert(index.clone(), Rc::new(RefCell::new(Var::new())));
+        if let Some(ptr) = val.upgrade() {
+          if let Var::Object(obj) = &*ptr.borrow() {
+            if !obj.contains_key(index) {
+              if let Var::Object(ref mut obj) = *ptr.borrow_mut() {
+                obj.insert(index.clone(), Rc::new(RefCell::new(Var::new())));
+              }
             }
+            if let Some(value) = obj.get(index) {
+              Some(value.clone())
+            } else {
+              None
+            }
+          } else {
+            panic!("Cannot create in a non-Object object");
           }
         } else {
-          panic!("Cannot create in a non-Object object");
+          None
         }
       }
       LazyRef::ScopeVar((val, index)) => {
-        if let None = val.borrow().get(index).0 {
-          val.borrow_mut().set(index.clone(), (Var::new(), false));
+        if let Some(ptr) = val.upgrade() {
+          if let None = ptr.borrow().get(index).0 {
+            ptr.borrow_mut().set(index.clone(), (Var::new(), false));
+          }
+          ptr.borrow_mut().get(index).0
+        } else {
+          None
         }
       }
-      LazyRef::Scope(_) => (),
+      LazyRef::Scope(_) => None,
     }
   }
   pub fn get(&self) -> Weak<RefCell<Var>> {
